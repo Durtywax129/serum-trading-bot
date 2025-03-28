@@ -1,0 +1,35 @@
+const express = require('express');
+const { Connection, Keypair } = require('@solana/web3.js');
+const { Market } = require('@project-serum/serum');
+const app = express();
+const port = 3000;
+
+// Solana connection and wallet setup
+const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
+const wallet = Keypair.fromSecretKey(Uint8Array.from([/* your wallet secret key array */]));
+
+async function getMarket() {
+    const marketAddress = "Serum Market Address"; // Use the Serum market address (PLAT, NUKE, or F47)
+    const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
+    return market;
+}
+
+app.get('/place-order', async (req, res) => {
+    const market = await getMarket();
+    const price = 1.0;  // Order price (example: 1 USDT)
+    const size = 10;    // Quantity of tokens to buy/sell
+
+    const order = await market.placeOrder(
+        connection,
+        wallet,
+        'buy',    // 'buy' or 'sell'
+        size,
+        price,
+        'limit',  // 'limit' or 'market'
+    );
+    res.json(order);
+});
+
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});
