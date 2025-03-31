@@ -1,35 +1,28 @@
-const express = require('express');
-const { Connection, Keypair } = require('@solana/web3.js');
-const { Market } = require('@project-serum/serum');
-const app = express();
-const port = 3000;
+const { Connection, Keypair, Transaction, PublicKey } = require('@solana/web3.js');
+const { Market, OpenOrders } = require('@project-serum/serum');
+const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
 
-// Solana connection and wallet setup
-const connection = new Connection("https://api.mainnet-beta.solana.com", "confirmed");
-const wallet = Keypair.fromSecretKey(Uint8Array.from([/* your wallet secret key array */]));
+// Connect to the Solana network
+const connection = new Connection("https://api.mainnet-beta.solana.com");
 
-async function getMarket() {
-    const marketAddress = "Serum Market Address"; // Use the Serum market address (PLAT, NUKE, or F47)
+// Your Phantom Wallet private key (ensure you replace with the correct key)
+const privateKey = Uint8Array.from([3W6gLR4XMR7FK8YwCYD6bQstCk78A94DKKBwGj1tq1a9xKbGgvF7EgdBguveA1YPSszGnZ82r5aAzkm2HuYei6T6]);
+
+const wallet = Keypair.fromSecretKey(privateKey);
+
+async function placeOrder() {
+    const marketAddress = new PublicKey('3UEmjbNapSKd7RRR7nUE9fPohMaCVf4t8HiUjmzGpump'); // Example market address
     const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
-    return market;
-}
-
-app.get('/place-order', async (req, res) => {
-    const market = await getMarket();
-    const price = 1.0;  // Order price (example: 1 USDT)
-    const size = 10;    // Quantity of tokens to buy/sell
-
+    
+    // Example: Place a buy order for $NUKE at a price of 0.0001 SOL
     const order = await market.placeOrder(
         connection,
         wallet,
-        'buy',    // 'buy' or 'sell'
-        size,
-        price,
-        'limit',  // 'limit' or 'market'
+        'buy', // 'buy' or 'sell'
+        0.1,   // Quantity (in $NUKE tokens you want to buy)
+        0.0001, // Price per token in SOL
+        'limit' // Order type: 'limit' or 'market'
     );
-    res.json(order);
-});
 
-app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-});
+    console.log("Order placed: ", order);
+}
