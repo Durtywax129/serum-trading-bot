@@ -1,28 +1,130 @@
-const { Connection, Keypair, Transaction, PublicKey } = require('@solana/web3.js');
-const { Market, OpenOrders } = require('@project-serum/serum');
+const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
+const { Market } = require('@project-serum/serum');
 const { TOKEN_PROGRAM_ID } = require('@solana/spl-token');
+const { Keypair } = require('@solana/web3.js');
 
-// Connect to the Solana network
+// Setup the Solana connection
 const connection = new Connection("https://api.mainnet-beta.solana.com");
 
-// Your Phantom Wallet private key (ensure you replace with the correct key)
+// Your Phantom Wallet private key (replace with your actual key)
 const privateKey = Uint8Array.from([3W6gLR4XMR7FK8YwCYD6bQstCk78A94DKKBwGj1tq1a9xKbGgvF7EgdBguveA1YPSszGnZ82r5aAzkm2HuYei6T6]);
 
+// Setup the wallet
 const wallet = Keypair.fromSecretKey(privateKey);
 
-async function placeOrder() {
-    const marketAddress = new PublicKey('3UEmjbNapSKd7RRR7nUE9fPohMaCVf4t8HiUjmzGpump'); // Example market address
-    const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
-    
-    // Example: Place a buy order for $NUKE at a price of 0.0001 SOL
-    const order = await market.placeOrder(
-        connection,
-        wallet,
-        'buy', // 'buy' or 'sell'
-        0.1,   // Quantity (in $NUKE tokens you want to buy)
-        0.0001, // Price per token in SOL
-        'limit' // Order type: 'limit' or 'market'
-    );
+// Define constants
+const maxTransactionAmount = 20; // Limit transaction to $20 worth of tokens
+const maxTradePerInterval = 20; // Limit to $20 per interval
+let entryPrice = 0; // Track the entry price of NUKE
+let currentPrice = 0; // Track the current price of NUKE
+let tradeAmountThisInterval = 0; // Track the total amount traded this interval
+let lastTradeTime = 0; // Track the time of last trade
+const marketAddress = new PublicKey('3UEmjbNapSKd7RRR7nUE9fPohMaCVf4t8HiUjmzGpump'); // Public key of the market you're trading on
 
-    console.log("Order placed: ", order);
+// Function to place a buy order using NUKE
+async function placeOrder(type, price, quantity) {
+  const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
+  
+  const order = await market.placeOrder(
+    connection,
+    wallet,
+    type, // 'buy' or 'sell'
+    price, 
+    quantity,
+    'limit' // or 'market'
+  );
+  console.log('Order placed:', order);
+  return order;
 }
+
+// Function to swap NUKE for SOL and send the profit to wallet
+async function swapNUKEForSOL(nukeAmount) {
+  const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
+  
+  // Calculate SOL value from NUKE (simplified calculation)
+  const solAmount = nukeAmount * currentPrice; // Replace with accurate conversion logic
+  
+  // Perform the trade and return the SOL profit
+  await placeOrder('sell', currentPrice, nukeAmount); // Sell NUKE for SOL
+  
+  return solAmount;
+}
+
+// Function to monitor price and execute trades
+async function monitorAndTrade() {
+  const now = new Date();
+  const currentTradeInterval = now.getMinutes();
+
+  // Reset the trade amount if it's a new 30-minute interval
+  if (currentTradeInterval % 30 === 0) {
+    tradeAmountThisInterval = 0;
+    console.log('New 30-minute interval started: Resetting trade amounts.');
+  }
+
+  // Check if we have reached the limit for this interval
+  if (tradeAmountThisInterval >= maxTradePerInterval) {
+    console.log('Trade limit for this interval reached. Waiting for the next interval.');
+    return;
+  }
+
+  const market = await Market.load(connection, marketAddress, {}, TOKEN_PROGRAM_ID);
+  
+  // Get current market price of NUKE in SOL
+  const bids = await market.loadBids(connection);
+  const asks = await market.loadAsks(connection);
+  const currentBid = bids.getBest();
+  const currentAsk = asks.getBest();
+  
+  if (currentBid) {
+    currentPrice = currentBid.price; // Update current price from bid
+  } else if (currentAsk) {
+    currentPrice = currentAsk.price; // Update current price from ask
+  }
+
+  console.log('Current NUKE Price in SOL:', currentPrice);
+
+  // If entry price is 0, it means we haven't bought yet, so we buy NUKE
+  if (entryPrice === 0) {
+    const buyAmount = Math.min(maxTransactionAmount / currentPrice, maxTradePerInterval - tradeAmountThisInterval); // Trade up to $20 per transaction
+    
+    if (buyAmount > 0) {
+      await placeOrder('buy', currentPrice, buyAmount);
+      entryPrice = currentPrice;
+      tradeAmountThisInterval += buyAmount * currentPrice; // Update the total amount spent this interval
+      console.log('Bought NUKE at', entryPrice);
+    }
+    return;
+  }
+
+  // Check for stop loss (5% loss)
+  if (currentPrice <= entryPrice * 0.95) {
+    console.log('Stop loss triggered, selling NUKE at', currentPrice);
+    const solProfit = await swapNUKEForSOL(maxTransactionAmount);
+    entryPrice = 0; // Reset entry price
+    console.log('Profit returned as SOL:', solProfit);
+  }
+
+  // Check for take profit (50% profit) or if the momentum is strong
+  if (currentPrice >= entryPrice * 1.50 || currentPrice >= entryPrice * 100) {
+    console.log('Take profit triggered, selling NUKE at', currentPrice);
+    const solProfit = await swapNUKEForSOL(maxTransactionAmount);
+    entryPrice = 0; // Reset entry price
+    console.log('Profit returned as SOL:', solProfit);
+  }
+
+  // Re-buy if the trend is still up (after selling)
+  if (entryPrice === 0 && currentPrice > entryPrice) {
+    console.log('Re-buying NUKE because trend is up at', currentPrice);
+    await placeOrder('buy', currentPrice, maxTransactionAmount);
+    entryPrice = currentPrice;
+  }
+
+  // Limit transaction size
+  if (tradeAmountThisInterval > maxTradePerInterval) {
+    console.log('Transaction size exceeds max limit');
+    return;
+  }
+}
+
+// Run the bot every 30 minutes
+setInterval(monitorAndTrade, 1800000); // 30 minutes = 1800000 ms
